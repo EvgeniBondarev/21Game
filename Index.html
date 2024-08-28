@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Очко</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            background-color: #f0f0f0;
+            color: #333;
+        }
+
+        #game {
+            margin: 0 auto;
+            width: 80%;
+            max-width: 1200px;
+        }
+
+        .card-container {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            width: 80px;
+            height: 120px;
+            background-size: cover;
+            background-position: center;
+            margin: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+
+        #controls {
+            margin-top: 20px;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            margin: 5px;
+        }
+
+        #result {
+            margin-top: 20px;
+            font-size: 18px;
+            font-weight: bold;
+        }
+
+        .win {
+            color: green;
+        }
+
+        .lose {
+            color: red;
+        }
+
+        .draw {
+            color: orange;
+        }
+    </style>
+</head>
+<body>
+    <h1>Игра Очко</h1>
+    <div id="game">
+        <div id="player-section">
+            <h2>Ваши карты</h2>
+            <div id="player-hand" class="card-container"></div>
+            <div id="player-score"></div>
+        </div>
+        <div id="bot-section">
+            <h2>Карты Бота</h2>
+            <div id="bot-hand" class="card-container"></div>
+            <div id="bot-score"></div>
+        </div>
+        <div id="result"></div>
+        <div id="controls">
+            <button id="hit-button">Взять карту</button>
+            <button id="stand-button">Остановиться</button>
+            <button id="start-button">Начать новую игру</button>
+        </div>
+        
+    </div>
+    <script>
+        const baseUrl = 'https://deckofcardsapi.com/api/deck';
+        let deckId = null;
+        let playerHand = [];
+        let botHand = [];
+        let gameStarted = false;
+
+        async function createAndShuffleDeck() {
+            const response = await fetch(`${baseUrl}/new/shuffle/?deck_count=1`);
+            const data = await response.json();
+            deckId = data.deck_id;
+        }
+
+        async function drawCards(count) {
+            const response = await fetch(`${baseUrl}/${deckId}/draw/?count=${count}`);
+            const data = await response.json();
+            return data.cards;
+        }
+
+        function getCardValue(card) {
+            if (card.value === 'ACE') return 11;
+            if (['KING', 'QUEEN', 'JACK'].includes(card.value)) return card.value === 'KING' ? 4 : card.value === 'QUEEN' ? 3 : 2;
+            return parseInt(card.value);
+        }
+
+        function calculateScore(cards) {
+            let score = 0;
+            let aceCount = 0;
+
+            for (const card of cards) {
+                score += getCardValue(card);
+                if (card.value === 'ACE') aceCount++;
+            }
+
+            while (score > 21 && aceCount > 0) {
+                score -= 10;
+                aceCount--;
+            }
+
+            return score;
+        }
+
+        function displayCards(containerId, cards, isHidden = false) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+            cards.forEach((card, index) => {
+                const cardElement = document.createElement('div');
+                cardElement.className = 'card';
+                cardElement.style.backgroundImage = `url(${isHidden && index === 0 ? 'https://deckofcardsapi.com/static/img/back.png' : card.image})`;
+                container.appendChild(cardElement);
+            });
+        }
+
+        async function startGame() {
+            await createAndShuffleDeck();
+            playerHand = await drawCards(1);
+            botHand = await drawCards(1);
+
+            displayCards('player-hand', playerHand);
+            displayCards('bot-hand', [botHand[0]], true); // Hide bot's card initially
+
+            document.getElementById('player-score').innerText = `Ваши очки: ${calculateScore(playerHand)}`;
+            document.getElementById('bot-score').innerText = 'Бот: ?';
+
+            gameStarted = true;
+            document.getElementById('result').innerText = '';
+            document.getElementById('result').className = ''; // Reset result class
+        }
+
+        async function playerHit() {
+            if (!gameStarted) return;
+
+            const newCard = await drawCards(1);
+            playerHand.push(newCard[0]);
+            displayCards('player-hand', playerHand);
+
+            const score = calculateScore(playerHand);
+            document.getElementById('player-score').innerText = `Ваши очки: ${score}`;
+
+            if (score > 21) {
+                endGame('Перебор! Вы проиграли.', 'lose');
+            }
+        }
+
+        async function botTurn() {
+            let botScore = calculateScore(botHand);
+            while (botScore < 17) {
+                const newCard = await drawCards(1);
+                botHand.push(newCard[0]);
+                displayCards('bot-hand', botHand); // Show cards as they are added
+                botScore = calculateScore(botHand);
+            }
+            return botScore;
+        }
+
+        async function playerStand() {
+            if (!gameStarted) return;
+
+            const finalPlayerScore = calculateScore(playerHand);
+
+            // Reveal bot's hidden card and perform bot's turn
+            displayCards('bot-hand', botHand); // Reveal all bot's cards
+            let finalBotScore = await botTurn();
+
+            document.getElementById('bot-score').innerText = `Бот: ${finalBotScore}`;
+            
+            if (finalBotScore > 21) {
+                endGame('Бот перебор! Вы выиграли.', 'win');
+            } else if (finalPlayerScore > finalBotScore) {
+                endGame('Вы выиграли!', 'win');
+            } else if (finalPlayerScore < finalBotScore) {
+                endGame('Вы проиграли.', 'lose');
+            } else {
+                endGame('Ничья.', 'draw');
+            }
+        }
+
+        function endGame(result, resultClass) {
+            gameStarted = false;
+            document.getElementById('result').innerText = result;
+            document.getElementById('result').className = resultClass;
+        }
+
+        document.getElementById('start-button').addEventListener('click', startGame);
+        document.getElementById('hit-button').addEventListener('click', playerHit);
+        document.getElementById('stand-button').addEventListener('click', playerStand);
+    </script>
+</body>
+</html>
